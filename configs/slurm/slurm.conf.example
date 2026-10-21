@@ -1,0 +1,44 @@
+# SLURM configuration example
+# HPC mini-cluster infrastructure
+# Review hostnames, node resources, and paths before deployment.
+
+ClusterName=cluster
+SlurmctldHost=master
+SlurmctldHost=master1
+
+SlurmUser=slurm
+SlurmdUser=root
+
+AuthType=auth/munge
+CryptoType=crypto/munge
+
+SlurmctldPort=6817
+SlurmdPort=6818
+
+StateSaveLocation=/var/spool/slurmctld
+SlurmdSpoolDir=/var/spool/slurmd
+SwitchType=switch/none
+MpiDefault=none
+
+SchedulerType=sched/backfill
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core
+
+ProctrackType=proctrack/cgroup
+TaskPlugin=task/affinity,task/cgroup
+
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost=master
+AccountingStoragePort=6819
+
+# Compute nodes
+NodeName=cn1 CPUs=2 RealMemory=1707
+NodeName=cn2 CPUs=2 RealMemory=1707
+NodeName=node01 CPUs=2 RealMemory=3914
+NodeName=node02 CPUs=2 RealMemory=2971
+NodeName=hmcn1 CPUs=4 RealMemory=3913
+
+# Partitions
+PartitionName=low Nodes=cn1,cn2 Default=NO MaxTime=INFINITE State=UP
+PartitionName=high Nodes=node01,node02 Default=YES MaxTime=INFINITE State=UP
+PartitionName=hmnode Nodes=hmcn1 Default=NO MaxTime=INFINITE State=UP
