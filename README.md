@@ -34,6 +34,8 @@ hpc-mini-cluster-infrastructure/
 └── docs/
     └── configuration-reference.md
     └── architecture.png
+    └── installation_guide.md
+
 
 ```
 
