@@ -1,0 +1,13 @@
+# NFS exports configuration example
+# Shares configured on the HPC cluster server.
+
+# Shared home directories and applications
+/home 10.10.10.0/24(rw,sync,no_root_squash)
+/apps 10.10.10.0/24(rw,sync,no_root_squash)
+
+# SLURM controller state directory
+/var/spool/slurmctld 10.10.10.100/24(rw,sync,no_root_squash)
+
+# xCAT provisioning directories
+/tftpboot *(rw,no_root_squash,sync,no_subtree_check,insecure)
+/install *(rw,no_root_squash,sync,no_subtree_check,insecure)
