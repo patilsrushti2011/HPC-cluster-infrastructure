@@ -21,6 +21,12 @@ This project documents the setup and configuration of a High Performance Computi
 - **LDAP:** Supports centralized user and group lookup.
 - **Grafana:** Used for cluster monitoring.
 
+## Architecture Diagram
+
+- The following diagram illustrates the high-level architecture of the HPC mini-cluster and its main components.
+![HPC Mini-Cluster Architecture](./docs/architecture.png)
+
+
 ## Repository Structure
 
 ```text
