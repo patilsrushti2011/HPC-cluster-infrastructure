@@ -1,0 +1,9 @@
+# LDAP client configuration example
+# Based on the HPC cluster's nslcd.conf settings.
+
+uid nslcd
+gid ldap
+
+uri ldap://master
+
+base dc=hpc,dc=local
