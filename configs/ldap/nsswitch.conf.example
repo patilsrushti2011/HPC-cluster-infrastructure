@@ -1,0 +1,7 @@
+# NSS configuration example
+# Relevant entries for local and LDAP identity lookup.
+
+passwd: files systemd ldap
+shadow: files ldap
+group: files systemd ldap
+hosts: files dns myhostname
