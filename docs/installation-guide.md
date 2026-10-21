@@ -1,279 +1,334 @@
-# HPC Cluster Setup Guide: SLURM, NFS, and LDAP
+# HPC Mini-Cluster Installation Guide
 
-This guide extracts the SLURM, NFS, and LDAP portions of the supplied
-*HPC_mini_cluster_docs.pdf* and organizes them for the `docs/` folder of
-a GitHub mini-HPC-cluster project.
+## 1. Introduction
 
-It documents the main setup flow, important configuration files,
-validation commands, and troubleshooting checks. It is a lab guide, not
-a universal copy-and-paste installer.
+A High Performance Computing (HPC) cluster connects multiple computers to execute computational workloads using shared resources. This project covers the configuration of cluster nodes, shared storage, job scheduling, parallel software, and centralized user management.
 
-> **Important --- adapt this guide to your cluster.** The source
-> document uses the hostnames `master`, `login`, `compute01`,
-> `compute02`, and `compute03`, with the internal network
-> `10.10.10.0/24` and LDAP base `dc=hpc,dc=local`. Your xCAT cluster may
-> use different hostnames, IP addresses, node roles, and
-> operating-system versions. Replace example values with your actual
-> configuration before running commands.
+### Technologies
 
-> **Security:** Never commit passwords, LDAP password hashes,
-> `/etc/munge/munge.key`, private SSH keys, or other secrets. Use
-> sanitized `.example` configuration files in a public repository. Back
-> up authentication configuration before editing it.
+- Rocky Linux
+- VirtualBox
+- SLURM
+- Munge
+- NFS
+- OpenLDAP
+- OpenMPI
+- Spack
 
-## 1. Example cluster roles
+## 2. Cluster Architecture
 
-The supplied guide describes these roles:
+The lab environment described in the installation reference consists of a master node, a login node, and three compute nodes.
 
-  -----------------------------------------------------------------------
-  Node                                Main role
-  ----------------------------------- -----------------------------------
-  Master                              SLURM controller, NFS server, LDAP
-                                      server, cluster management
+| Node | Responsibility |
+|---|---|
+| Master | Cluster administration, shared storage, scheduler controller, LDAP server |
+| Login | User access, compilation, and job submission |
+| Compute nodes | Execution of scheduled workloads |
 
-  Login node                          User access, compilation, job
-                                      submission, NFS and LDAP client
+The nodes communicate through an internal network. A NAT adapter provides internet access for package installation.
 
-  Compute nodes                       Execute scheduled jobs; run
-                                      `slurmd`; use shared NFS storage
-                                      and LDAP identities
-  -----------------------------------------------------------------------
+## 3. Prepare the Virtual Machines
 
-In a cluster managed by xCAT, provisioning and node-management
-responsibilities may be placed differently. Document the roles that are
-actually configured in your environment.
+### 3.1 Install VirtualBox
 
-## 2. NFS shared storage
+Install VirtualBox on the host operating system and ensure its kernel modules are available.
 
-### 2.1 Purpose
+### 3.2 Download Rocky Linux
 
-NFS makes shared directories available on multiple cluster nodes. The
-source guide exports `/home` for user home directories and later exports
-`/apps` for shared HPC software.
+Download the Rocky Linux x86_64 Minimal ISO from the official Rocky Linux website.
 
-The expected outcome is that a file created in a shared directory from
-one node can be read from another node.
+### 3.3 Create the master virtual machine
 
-### 2.2 Install NFS utilities
+Create a Linux virtual machine with the following resources:
 
-Run on the server and client nodes:
+- 2 CPU cores
+- Approximately 2 GB RAM
+- 30 GB virtual disk
+- NAT network adapter
+- Internal network adapter
 
-``` bash
+Use `hpcnet` as the internal network name for the nodes in this lab.
+
+### 3.4 Install Rocky Linux
+
+Install Rocky Linux using the Minimal Install option. Create an administrative account and configure the hostname of the master node.
+
+## 4. Configure Cluster Networking
+
+Each node requires a unique hostname and static internal IP address.
+
+Configure the internal network interface through NetworkManager:
+
+```bash
+sudo nmtui
+```
+
+After configuring the address, restart networking and verify the interface:
+
+```bash
+sudo systemctl restart NetworkManager
+ip addr
+ip route
+```
+
+Configure hostname resolution consistently on the nodes through `/etc/hosts` or the cluster's name service.
+
+Verify connectivity with:
+
+```bash
+getent hosts master
+ping -c 3 master
+```
+
+Install the basic administration and development tools:
+
+```bash
+sudo dnf update -y
+sudo dnf install -y vim wget curl git \
+  bind-utils net-tools htop tmux tree \
+  gcc gcc-c++ gcc-gfortran make cmake \
+  python3 openssh-server
+```
+
+## 5. Create the Login and Compute Nodes
+
+Shut down the prepared virtual machine and create a snapshot. Create full clones for the login and compute nodes.
+
+For each clone:
+
+1. Assign a unique hostname.
+2. Regenerate its machine ID.
+3. Assign a unique internal IP address.
+4. Configure SSH port forwarding if host-to-VM SSH access is required.
+5. Verify networking and hostname resolution.
+
+Regenerate the machine ID on each clone:
+
+```bash
+sudo rm -f /etc/machine-id
+sudo systemd-machine-id-setup
+```
+
+Set the appropriate hostname:
+
+```bash
+sudo hostnamectl set-hostname login.local
+```
+
+Use the corresponding hostname on each compute node.
+
+## 6. Configure SSH Access
+
+Passwordless SSH allows authorized cluster operations and supports workflows that need to launch processes across nodes.
+
+Generate an SSH key for the intended user:
+
+```bash
+ssh-keygen -t ed25519
+```
+
+Copy the public key to the required nodes:
+
+```bash
+ssh-copy-id hpcadmin@master
+ssh-copy-id hpcadmin@compute01
+ssh-copy-id hpcadmin@compute02
+ssh-copy-id hpcadmin@compute03
+```
+
+Test the connections:
+
+```bash
+ssh master hostname
+ssh compute01 hostname
+ssh compute02 hostname
+ssh compute03 hostname
+```
+
+## 7. Configure Shared Storage with NFS
+
+NFS provides shared directories so users can access the same files from the login and compute nodes.
+
+### 7.1 Install NFS packages
+
+Install the NFS utilities on the participating nodes:
+
+```bash
 sudo dnf install -y nfs-utils
 ```
 
-### 2.3 Configure the NFS server
+### 7.2 Configure the NFS server
 
-Run on the node that hosts the NFS share.
+On the master node, enable the NFS server:
 
-Enable and start the NFS server:
-
-``` bash
+```bash
 sudo systemctl enable --now nfs-server
 systemctl status nfs-server
 ```
 
-The source guide configures `/home` in `/etc/exports`:
+Configure `/etc/exports`:
 
-``` text
+```text
 /home 10.10.10.0/24(rw,sync,no_root_squash)
 ```
 
-If your cluster also shares `/apps`, the source guide adds:
+Apply and verify the exports:
 
-``` text
-/apps 10.10.10.0/24(rw,sync,no_root_squash)
-```
-
-These are examples from the source guide, not values to use blindly.
-Replace the network and paths with your own.
-
--   `rw`: allows read/write access.
--   `sync`: asks the server to confirm writes synchronously.
--   `no_root_squash`: preserves root privileges from the client and can
-    create a security risk. Use it only when you understand and
-    explicitly require that behavior. Prefer safer export options for
-    your environment.
-
-Apply and inspect the exports:
-
-``` bash
+```bash
 sudo exportfs -rav
 sudo exportfs -v
-showmount -e localhost
 ```
 
-### 2.4 Mount the share on clients
+### 7.3 Configure NFS clients
 
-On each intended client node, create the mount point if needed:
+On each client node, create the mount point and mount the shared home directory:
 
-``` bash
-sudo mkdir -p /home
-```
-
-The source guide moves an existing local `/home` to `/home.local` before
-mounting. **Do not run this command without checking your system
-first**; it can affect local user data and active home directories.
-
-``` bash
-# Source-guide example only; review local data before doing this.
-sudo mv /home /home.local
+```bash
 sudo mkdir -p /home
 sudo mount master:/home /home
+df -h
 ```
 
-For a shared software directory, the source guide uses `/apps`:
+Configure `/etc/fstab` for persistent mounting:
 
-``` bash
-sudo mkdir -p /apps
-sudo mount master:/apps /apps
+```text
+master:/home /home nfs defaults 0 0
 ```
 
-Check the mounted filesystems:
+Validate the mount configuration:
 
-``` bash
-df -hT
-findmnt /home
-findmnt /apps
-```
-
-### 2.5 Make NFS mounts persistent
-
-On client nodes, add the appropriate entries to `/etc/fstab`. The source
-guide uses:
-
-``` text
-master:/home  /home  nfs  defaults  0 0
-master:/apps  /apps  nfs  defaults,_netdev  0 0
-```
-
-Only add the entries for shares you actually export. Test the file
-before rebooting:
-
-``` bash
+```bash
 sudo mount -a
+mount | grep /home
 ```
 
-If this reports an error, correct it before rebooting. Confirm the mount
-is restored after a controlled reboot, once the NFS server is available.
+Create a test file from one node and verify that it is visible from another node.
 
-### 2.6 Validate shared storage
+## 8. Configure Munge Authentication and SLURM
 
-Create a harmless test file from one client:
+SLURM manages compute resources and schedules submitted jobs. Munge provides authentication between participating cluster services.
 
-``` bash
-touch ~/shared_test
-```
+### 8.1 Install the required packages
 
-On another node, verify that the same file is visible:
+Perform these steps on the master, login, and compute nodes.
 
-``` bash
-ls -l ~/shared_test
-```
+Enable the required repositories on the Rocky Linux installation:
 
-For `/apps`, the source guide tests by creating a file on the server and
-listing it from a client:
-
-``` bash
-# On the NFS server
-touch /apps/testfile
-
-# On a client
-ls -l /apps/testfile
-```
-
-**Evidence for GitHub:** a sanitized `/etc/exports` example, relevant
-`/etc/fstab` example, `exportfs -v` output, `df -hT`/`findmnt` output,
-and a screenshot showing the shared-file test.
-
-## 3. SLURM workload scheduling and Munge
-
-### 3.1 Purpose and service roles
-
-SLURM schedules jobs and allocates compute resources.
-
-  Node role       Services in the source guide
-  --------------- ----------------------------------
-  Master          `munged`, `slurmctld`
-  Login           `munged`; users submit jobs here
-  Compute nodes   `munged`, `slurmd`
-
-The source guide states that `/etc/slurm/slurm.conf` must be consistent
-across the participating nodes. The login node is not a compute node in
-that example and should not run `slurmd` unless you explicitly
-configured it as a compute node.
-
-### 3.2 Install packages
-
-The source guide uses Rocky Linux 9 package commands. Confirm repository
-and package availability for your exact OS release before running them.
-
-On all participating nodes, according to the source guide:
-
-``` bash
+```bash
 sudo dnf install -y epel-release
 sudo crb enable
-sudo dnf install -y munge munge-libs slurm slurm-slurmd slurm-slurmctld
 ```
 
-Verify installed packages and service accounts:
+Install Munge and SLURM packages:
 
-``` bash
+```bash
+sudo dnf install -y \
+  munge munge-libs \
+  slurm slurm-slurmd slurm-slurmctld
+```
+
+Verify the installed packages and service accounts:
+
+```bash
 rpm -qa | grep -E 'munge|slurm'
 id munge
 id slurm
 ```
 
-The source guide notes that if the `slurm` system account is missing, it
-may need to be created according to the packaging and local
-installation. Do not create duplicate accounts; check the package and
-existing account state first.
+If the `slurm` account is missing, the reference procedure creates it as a system account:
 
-### 3.3 Configure Munge authentication
+```bash
+sudo groupadd slurm
+sudo useradd -r -g slurm -s /sbin/nologin slurm
+```
 
-Munge provides authentication between cluster services. All
-participating nodes must use the same trusted Munge key.
+Check first that the group and account do not already exist before creating them.
 
-On the designated controller, the source guide generates a key with:
+### 8.2 Generate the Munge key on the master
 
-``` bash
+Munge uses a shared secret key to authenticate credentials between cluster nodes. **Every participating node must use the same `/etc/munge/munge.key`.**
+
+Run this command on the master only:
+
+```bash
 sudo /usr/sbin/create-munge-key
 ```
 
-Check ownership and permissions:
+Check that the key exists:
 
-``` bash
+```bash
 sudo ls -l /etc/munge/munge.key
 ```
 
-Distribute the key to the other participating nodes using a secure
-administrative method. **Do not put the key in GitHub, a public folder,
-or an ordinary project archive.** Do not leave temporary copies with
-permissive permissions.
+### 8.3 Distribute the Munge key
 
-On each node, ensure the key is owned by `munge:munge` and is readable
-only by the required account. Then enable Munge:
+Copy the key securely from the master to the other participating nodes. The reference procedure stages it in `/tmp/munge.key` and then installs it on each node.
 
-``` bash
+For example, from the master:
+
+```bash
+sudo scp /etc/munge/munge.key \
+  login:/tmp/munge.key
+
+sudo scp /etc/munge/munge.key \
+  compute01:/tmp/munge.key
+
+sudo scp /etc/munge/munge.key \
+  compute02:/tmp/munge.key
+
+sudo scp /etc/munge/munge.key \
+  compute03:/tmp/munge.key
+```
+
+On each receiving node, stop Munge before replacing the key:
+
+```bash
+sudo systemctl stop munge
+sudo mv /tmp/munge.key /etc/munge/munge.key
+sudo chown munge:munge /etc/munge/munge.key
+sudo chmod 400 /etc/munge/munge.key
+```
+
+Start and enable Munge on **all participating nodes**:
+
+```bash
 sudo systemctl enable --now munge
 systemctl status munge
 ```
 
-Test authentication from the controller to a compute node:
+Verify local credential creation:
 
-``` bash
-munge -n | ssh compute01 unmunge
+```bash
+munge -n | unmunge
 ```
 
-Repeat for the other configured nodes. A successful decode should report
-a success status. Use your real node names.
+Then test authentication from the master to the other nodes:
 
-### 3.4 Create and distribute `slurm.conf`
+```bash
+munge -n | ssh login unmunge
+munge -n | ssh compute01 unmunge
+munge -n | ssh compute02 unmunge
+munge -n | ssh compute03 unmunge
+```
 
-The source guide creates `/etc/slurm/slurm.conf` on the master. Its
-example is:
+A successful result should include `STATUS: Success`.
 
-``` text
+Never commit `/etc/munge/munge.key` to GitHub or share it publicly.
+
+### 8.4 Create `/etc/slurm/slurm.conf`
+
+SLURM uses `/etc/slurm/slurm.conf` to define the cluster, controller, compute nodes, authentication method, scheduler, and partitions. The configuration must be consistent across all participating nodes.
+
+On the master:
+
+```bash
+sudo mkdir -p /etc/slurm
+sudo vim /etc/slurm/slurm.conf
+```
+
+Use the following configuration from the installation reference for the example three-compute-node lab:
+
+```ini
 ClusterName=hpccluster
 SlurmctldHost=master
 
@@ -306,437 +361,235 @@ NodeName=compute03 CPUs=2 State=UNKNOWN
 PartitionName=debug Nodes=ALL Default=YES MaxTime=INFINITE State=UP
 ```
 
-This is the source document's example, **not a ready-to-use
-configuration for every cluster**. Before using it, update at least:
+**Configuration values explained:**
 
--   `ClusterName` and `SlurmctldHost`.
--   `NodeName` entries to match actual compute-node names.
--   `CPUs` to match the CPU resources configured and detected on each
-    VM.
--   The partition name and limits to match your intended policy.
--   Any paths or plugin settings required by your installed SLURM
-    version and local configuration.
+| Setting | Purpose |
+|---|---|
+| `ClusterName` | Names the SLURM cluster |
+| `SlurmctldHost` | Identifies the controller host |
+| `AuthType=auth/munge` | Uses Munge for authentication |
+| `NodeName` | Defines each compute node and its configured CPU count |
+| `SchedulerType` | Selects the backfill scheduler |
+| `SelectType` | Selects the resource-selection plugin |
+| `PartitionName` | Defines a queue of nodes available for jobs |
+| `StateSaveLocation` | Stores controller state |
+| `SlurmdSpoolDir` | Stores compute-daemon state |
 
-Create the required runtime directories and ensure their ownership
-matches the service account and your installation:
+The node names and CPU counts must match the actual machines. This example belongs to the reference lab; use the separate configuration example below when documenting the different xCAT-based cluster.
 
-``` bash
-# Example paths from the source guide
-sudo mkdir -p /var/spool/slurmctld /var/spool/slurmd
+### 8.5 Create the SLURM runtime directories
+
+On the master:
+
+```bash
+sudo mkdir -p /var/spool/slurmctld
+sudo mkdir -p /var/spool/slurmd
 sudo chown slurm:slurm /var/spool/slurmctld
 sudo chown slurm:slurm /var/spool/slurmd
 ```
 
-Create `/var/spool/slurmd` with the appropriate ownership on each
-compute node as well.
+On each compute node:
 
-Distribute the same reviewed `slurm.conf` to all nodes that need it,
-placing it at the configuration path used by your installation.
+```bash
+sudo mkdir -p /var/spool/slurmd
+sudo chown slurm:slurm /var/spool/slurmd
+```
 
-### 3.5 Start services
+Verify the directory ownership:
 
-On the controller:
+```bash
+ls -ld /var/spool/slurmctld
+ls -ld /var/spool/slurmd
+```
 
-``` bash
+### 8.6 Distribute the SLURM configuration
+
+Copy the configuration from the master to the other nodes:
+
+```bash
+scp /etc/slurm/slurm.conf login:/tmp/slurm.conf
+scp /etc/slurm/slurm.conf compute01:/tmp/slurm.conf
+scp /etc/slurm/slurm.conf compute02:/tmp/slurm.conf
+scp /etc/slurm/slurm.conf compute03:/tmp/slurm.conf
+```
+
+On each receiving node, install it in the SLURM configuration directory:
+
+```bash
+sudo mv /tmp/slurm.conf /etc/slurm/slurm.conf
+```
+
+Confirm that `/etc/slurm/slurm.conf` is consistent across the cluster.
+
+### 8.7 Start the SLURM controller and node daemons
+
+On the master only, start the controller:
+
+```bash
 sudo systemctl enable --now slurmctld
 systemctl status slurmctld
 ```
 
-On each compute node:
+On each compute node, start the compute daemon:
 
-``` bash
+```bash
 sudo systemctl enable --now slurmd
 systemctl status slurmd
 ```
 
-Check cluster status on a node with the SLURM client tools:
+The login node is used for user access and job submission. Start `slurmd` there only if it is intended to act as a compute node in your configuration.
 
-``` bash
+### 8.8 Verify and reconfigure SLURM
+
+On the master:
+
+```bash
+sudo scontrol reconfigure
 sinfo
 scontrol show nodes
 squeue
 ```
 
-The source guide's example uses the `debug` partition and compute nodes
-named `compute01` through `compute03`. Your output will differ if your
-names and partition differ.
+If a service fails to start, inspect its logs:
 
-### 3.6 Test job execution
+```bash
+sudo journalctl -u slurmctld --no-pager -n 50
+sudo journalctl -u slurmd --no-pager -n 50
+```
 
-From the login node, the source guide tests one node:
+If a compute node reports a CPU or hardware-topology mismatch, compare the node's actual hardware with the `CPUs` value in `slurm.conf` before changing its state. Do not delete spool state or resume a drained node without first diagnosing the cause.
 
-``` bash
+### 8.9 Test job execution
+
+From the login node, run a simple test:
+
+```bash
 srun hostname
 ```
 
-It then tests multiple nodes:
+Check the scheduler's node and partition status:
 
-``` bash
-srun -N 3 hostname
-srun -N 3 -n 6 hostname
-srun -N 1 -n 2 hostname
+```bash
+sinfo
+scontrol show nodes
 ```
 
-Change the node and task counts to values supported by your cluster. The
-commands demonstrate allocation and task placement; use your MPI job
-script as an additional test if MPI is part of your project.
+A successful test should run on a configured compute node. If the node is unavailable, check hostname resolution, Munge authentication, SLURM configuration consistency, daemon status, and the reported node state.
 
-**Evidence for GitHub:** sanitized `slurm.conf.example`, `sinfo`,
-`squeue`, `scontrol show nodes`, a successful job script, and the job
-output. Never include the Munge key.
+### SLURM configuration references
 
-## 4. LDAP centralized identity management
+- [SLURM configuration example in this repository](../configs/slurm/slurm.conf.example)
+- [SLURM configuration notes in this repository](../configs/slurm/README.md)
+- [Official `slurm.conf` documentation](https://slurm.schedmd.com/slurm.conf.html)
+- [Official SLURM administrator quick-start guide](https://slurm.schedmd.com/quickstart_admin.html)
+- [Official `slurmctld` documentation](https://slurm.schedmd.com/slurmctld.html)
+- [Official `slurmd` documentation](https://slurm.schedmd.com/slurmd.html)
 
-### 4.1 Purpose and roles
+## 9. Configure the Shared Software Filesystem
 
-The source guide uses OpenLDAP with `nslcd`, NSS, and PAM.
+A shared `/apps` filesystem provides a common location for compilers, libraries, and scientific applications.
 
-  -----------------------------------------------------------------------
-  Node role                           LDAP configuration
-  ----------------------------------- -----------------------------------
-  Master                              OpenLDAP server (`slapd`)
+1. Attach an additional virtual disk to the master.
+2. Identify the correct disk device.
+3. Create a partition and an XFS filesystem.
+4. Mount the filesystem at `/apps`.
+5. Configure the persistent mount in `/etc/fstab`.
+6. Create the software directory hierarchy.
+7. Export `/apps` through NFS.
+8. Mount `/apps` on the required client nodes.
+9. Verify that the same files are visible across the cluster.
 
-  Login node                          LDAP client
+## 10. Configure Centralized User Management with LDAP
 
-  Compute nodes                       LDAP clients
+OpenLDAP provides a centralized directory for user and group information. Client services allow Linux systems to resolve those identities.
 
-  Master/controller                   Must also resolve LDAP identities
-                                      if SLURM runs there under the
-                                      source architecture
-  -----------------------------------------------------------------------
+### 10.1 Install the LDAP server
 
-LDAP centralizes account information so that the cluster can resolve the
-same user and group IDs on multiple nodes. Matching UID/GID values are
-important when users access shared NFS files.
+On the master node:
 
-The source guide uses the example LDAP base DN `dc=hpc,dc=local`, group
-`hpcusers`, and test user `testUser`. Replace these with your own
-directory design.
-
-### 4.2 Install and start OpenLDAP on the server
-
-Run only on the designated LDAP server:
-
-``` bash
-sudo dnf install -y openldap openldap-servers openldap-clients
+```bash
+sudo dnf install -y openldap \
+  openldap-servers openldap-clients
 sudo systemctl enable --now slapd
 systemctl status slapd
 ```
 
-Generate an administrator password hash interactively:
+Configure the LDAP database, directory suffix, administrator identity, and password hash.
 
-``` bash
-slappasswd
-```
+### 10.2 Create directory entries
 
-Do not publish the password or generated hash. The source guide stores
-the hash in the LDAP database configuration and uses the directory base
-`dc=hpc,dc=local`, with manager DN `cn=Manager,dc=hpc,dc=local`.
+Create the LDAP directory structure, including the `People` and `Groups` organizational units.
 
-The source guide's database LDIF example uses these attributes:
+Add a group and a user entry with unique UID and GID values, a home-directory path, and a login shell.
 
-``` text
-dn: olcDatabase={2}mdb,cn=config
-changetype: modify
-replace: olcSuffix
-olcSuffix: dc=hpc,dc=local
+Use `ldapadd` to add entries and `ldapsearch` to verify them.
 
-dn: olcDatabase={2}mdb,cn=config
-changetype: modify
-replace: olcRootDN
-olcRootDN: cn=Manager,dc=hpc,dc=local
+### 10.3 Configure LDAP clients
 
-dn: olcDatabase={2}mdb,cn=config
-changetype: modify
-replace: olcRootPW
-olcRootPW: PASTE_HASH_HERE
-```
+Install the LDAP client packages on the login and compute nodes.
 
-The database index (`{2}mdb`) may differ on another installation.
-Inspect your server configuration and adapt the LDIF rather than
-assuming that index is correct.
+Configure `/etc/nslcd.conf` with the LDAP server and search base:
 
-Apply the configuration using the local LDAP administration method
-described in the source guide:
-
-``` bash
-sudo ldapmodify -Y EXTERNAL -H ldapi:/// -f db.ldif
-```
-
-Import the schemas shown in the source guide if they are not already
-present:
-
-``` bash
-sudo ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/cosine.ldif
-sudo ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/nis.ldif
-sudo ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/inetorgperson.ldif
-```
-
-Schema imports can fail if a schema is already loaded; check the
-existing configuration before repeating them.
-
-### 4.3 Create the LDAP directory tree, group, and test user
-
-The source guide creates a base tree with `ou=People` and `ou=Groups`
-under `dc=hpc,dc=local`.
-
-Example `base.ldif`:
-
-``` text
-dn: dc=hpc,dc=local
-objectClass: top
-objectClass: dcObject
-objectClass: organization
-o: HPC Cluster
-dc: hpc
-
-dn: ou=People,dc=hpc,dc=local
-objectClass: organizationalUnit
-ou: People
-
-dn: ou=Groups,dc=hpc,dc=local
-objectClass: organizationalUnit
-ou: Groups
-```
-
-Add the base tree:
-
-``` bash
-ldapadd -x -D "cn=Manager,dc=hpc,dc=local" -W -f base.ldif
-```
-
-The source guide defines a POSIX group with GID `10000`:
-
-``` text
-dn: cn=hpcusers,ou=Groups,dc=hpc,dc=local
-objectClass: posixGroup
-cn: hpcusers
-gidNumber: 10000
-```
-
-It then creates a test user with UID `10001`, primary GID `10000`, home
-`/home/testUser`, and shell `/bin/bash`. Generate the user's password
-hash interactively with `slappasswd` and put the hash in a local LDIF
-file that is **not committed to GitHub**.
-
-Example user entry structure:
-
-``` text
-dn: uid=testUser,ou=People,dc=hpc,dc=local
-objectClass: inetOrgPerson
-objectClass: posixAccount
-objectClass: shadowAccount
-cn: Test User
-sn: User
-uid: testUser
-uidNumber: 10001
-gidNumber: 10000
-homeDirectory: /home/testUser
-loginShell: /bin/bash
-userPassword: PASTE_HASH_HERE
-```
-
-Add the group and user with the source guide's pattern:
-
-``` bash
-ldapadd -x -D "cn=Manager,dc=hpc,dc=local" -W -f group.ldif
-ldapadd -x -D "cn=Manager,dc=hpc,dc=local" -W -f user.ldif
-```
-
-These LDIF files are templates. Check your LDAP schema, directory
-structure, UID/GID allocation, and password-handling policy before
-applying them.
-
-Verify the directory and user:
-
-``` bash
-ldapsearch -x -b "dc=hpc,dc=local"
-ldapsearch -x -b "dc=hpc,dc=local" uid=testUser
-```
-
-### 4.4 Configure LDAP clients
-
-The source guide installs the client packages on the login node, then
-repeats the appropriate client setup on the other nodes:
-
-``` bash
-sudo dnf install -y openldap-clients nss-pam-ldapd
-```
-
-Example `/etc/nslcd.conf` from the source guide:
-
-``` text
+```text
 uid nslcd
 gid ldap
-
 uri ldap://master
 base dc=hpc,dc=local
 ```
 
-Set restrictive permissions on the client configuration:
+Restrict the configuration file's permissions and enable the service:
 
-``` bash
+```bash
 sudo chmod 600 /etc/nslcd.conf
 sudo systemctl enable --now nslcd
 systemctl status nslcd
 ```
 
-If your configuration includes bind credentials, keep them out of GitHub
-and protect the file.
+Configure NSS to use LDAP for user and group lookups, then restart `nslcd`.
 
-Test connectivity from the client:
+### 10.4 Verify centralized user lookup
 
-``` bash
-ldapsearch -x -H ldap://master -b "dc=hpc,dc=local" uid=testUser
+Test the directory query:
+
+```bash
+ldapsearch -x -H ldap://master \
+  -b "dc=hpc,dc=local" uid=testUser
 ```
 
-The source guide updates `/etc/nsswitch.conf` so Linux checks local
-account files and LDAP:
+Verify that Linux recognizes the user:
 
-``` text
-passwd: files ldap
-group:  files ldap
-shadow: files ldap
-```
-
-Exact NSS and PAM configuration depends on the operating-system release
-and authentication stack. On modern Rocky Linux, use the supported
-system authentication tools and back up existing files before changes.
-Do not blindly replace PAM files or remove existing `pam_unix.so`
-entries; a bad PAM change can prevent logins.
-
-The source guide uses `oddjob-mkhomedir` to support automatic
-home-directory creation:
-
-``` bash
-sudo dnf install -y oddjob-mkhomedir
-sudo systemctl enable --now oddjobd
-```
-
-Configure automatic home creation using the supported PAM/authentication
-profile for your OS, rather than copying PAM lines without checking the
-existing stack.
-
-### 4.5 Verify LDAP identity and authentication
-
-Run these checks on the master/controller, login node, and compute nodes
-where LDAP client resolution is required:
-
-``` bash
-getent passwd testUser
-id testUser
-systemctl status nslcd
-```
-
-The source guide's sample account resolves as UID `10001` and GID
-`10000`. Your output should match the actual UID/GID assigned in your
-directory.
-
-Test an LDAP bind interactively:
-
-``` bash
-ldapwhoami -x \
-  -D "uid=testUser,ou=People,dc=hpc,dc=local" \
-  -W \
-  -H ldap://master
-```
-
-Test login with a dedicated non-administrative test account only after
-client authentication and home-directory setup are complete.
-
-**Evidence for GitHub:** sanitized client configuration examples,
-redacted LDAP search output, `getent passwd`/`id` output, and a
-successful test login. Do not publish password hashes, bind passwords,
-or private user information.
-
-## 5. SLURM + LDAP + NFS: important integration checks
-
-These services depend on each other:
-
-1.  LDAP provides consistent user and group identities.
-2.  NFS provides shared home directories and, optionally, shared
-    software.
-3.  SLURM uses operating-system user identities when scheduling and
-    launching jobs.
-
-Check that the same LDAP user resolves with the same UID/GID on the
-controller, login node, and compute nodes. Check that the user's home
-directory is available through the intended NFS mount.
-
-If jobs fail for LDAP users, the source guide specifically recommends
-checking identity resolution on all relevant nodes:
-
-``` bash
+```bash
 getent passwd testUser
 id testUser
 ```
 
-It also recommends checking the LDAP client service and SLURM services:
+Configure PAM and automatic home-directory creation as required by the installed Rocky Linux authentication stack.
 
-``` bash
-systemctl status nslcd
-systemctl status slurmctld
-systemctl status slurmd
-journalctl -u slurmctld -n 50
-```
+## 11. Automate LDAP User Administration
 
-Use `slurmctld` checks on the controller and `slurmd` checks on compute
-nodes.
+User-management scripts can automate the creation, deletion, and password updates of LDAP users.
 
-## 6. Suggested GitHub files
+After each operation:
 
-For a repository, keep the real configuration private where necessary
-and publish only reviewed examples:
+- Verify the LDAP entry.
+- Check user and group lookup from a client node.
+- Confirm the home-directory behavior.
+- Handle credentials securely.
 
-``` text
-configs/
-├── nfs/
-│   ├── exports.example
-│   ├── fstab.example
-│   └── README.md
-├── slurm/
-│   ├── slurm.conf.example
-│   └── README.md
-└── ldap/
-    ├── nslcd.conf.example
-    ├── base.ldif.example
-    ├── group.ldif.example
-    ├── user.ldif.example
-    └── README.md
+## 12. Final Validation
 
-docs/
-├── installation-guide.md
-├── testing-and-validation.md
-└── troubleshooting.md
-```
+Verify each major component before considering the installation complete.
 
-Do not place `munge.key`, real LDAP password hashes, private keys, or
-credentials in these folders. For LDAP examples, use clearly fake test
-values and explain which values must be customized.
+- [ ] Hostnames and internal network connectivity work.
+- [ ] SSH access between the required nodes works.
+- [ ] NFS exports and mounts are available.
+- [ ] Munge authentication succeeds.
+- [ ] SLURM controller and compute daemons are active.
+- [ ] `sinfo` reports the configured nodes and partitions.
+- [ ] A test SLURM job completes and produces output.
+- [ ] Shared `/apps` storage is available where required.
+- [ ] LDAP user and group lookups work on client nodes.
 
-## 7. Final validation checklist
+## Reference
 
--   [ ] NFS server is active and exports the intended directories.
--   [ ] NFS clients mount the correct shares and shared-file visibility
-    is tested.
--   [ ] NFS mounts survive a controlled reboot.
--   [ ] Munge is active and authentication works between the relevant
-    nodes.
--   [ ] SLURM controller and compute daemons are active on the correct
-    nodes.
--   [ ] `sinfo` and `squeue` show the expected cluster state.
--   [ ] A simple SLURM job completes successfully.
--   [ ] LDAP user lookup works on every node that needs the identity.
--   [ ] UID/GID values are consistent across nodes.
--   [ ] LDAP user authentication and home-directory access work.
--   [ ] A SLURM job submitted by the test user can access the expected
-    NFS home directory.
-
-## Source note
-
-This guide is based on the supplied *HPC_mini_cluster_docs.pdf*,
-particularly its sections on NFS shared storage (Section 10 and the
-`/apps` filesystem in Section 12), Munge and SLURM (Section 11), and
-OpenLDAP with `nslcd` (Section 14). It is reorganized for a GitHub
-project and includes reminders to adapt sample hostnames, addresses, and
-security-sensitive settings to the actual cluster.
+The installation topics in this document are summarized and reorganized from the supplied *HPC Mini Cluster Documentation* PDF. The VirtualBox lab topology and the separate xCAT/SLURM configuration examples in this repository represent different documented environments.
