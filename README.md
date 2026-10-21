@@ -33,6 +33,8 @@ hpc-mini-cluster-infrastructure/
 │   └── xcat/
 └── docs/
     └── configuration-reference.md
+    └── architecture.png
+
 ```
 
 ## Documentation
