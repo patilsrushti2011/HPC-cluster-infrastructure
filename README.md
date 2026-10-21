@@ -54,4 +54,4 @@ This repository contains configuration examples and documentation describing the
 
 ## Notes
 
-Configuration examples may require changes for your environment. Protect credentials and private configuration details before publishing files publicly.
+Configuration examples may require changes for your environment.
