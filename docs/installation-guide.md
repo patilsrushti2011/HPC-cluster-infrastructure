@@ -480,10 +480,8 @@ A successful test should run on a configured compute node. If the node is unavai
 
 - [SLURM configuration example in this repository](../configs/slurm/slurm.conf.example)
 - [SLURM configuration notes in this repository](../configs/slurm/README.md)
-- [Official `slurm.conf` documentation](https://slurm.schedmd.com/slurm.conf.html)
-- [Official SLURM administrator quick-start guide](https://slurm.schedmd.com/quickstart_admin.html)
-- [Official `slurmctld` documentation](https://slurm.schedmd.com/slurmctld.html)
-- [Official `slurmd` documentation](https://slurm.schedmd.com/slurmd.html)
+
+
 
 ## 9. Configure the Shared Software Filesystem
 
