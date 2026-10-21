@@ -1,0 +1,36 @@
+# xCAT Node Definitions - HPC Mini-Cluster
+# Example based on the project's node configuration.
+# Review values before using them in another environment.
+
+# Configured node names:
+# hmcn1, node01, node02
+
+# Example details for hmcn1:
+NodeName: hmcn1
+Arch: x86_64
+Groups: highmemory
+IP: 10.10.10.155
+NetworkInterface: enp0s3
+Netboot: xnba
+OperatingSystem: rocky9.5
+Profile: compute
+ProvisioningMethod: rocky9.5-x86_64-netboot-compute
+
+# Post-provisioning scripts:
+# otherpkgs
+# syslog
+# remoteshell
+# syncfiles
+# start-hpc-services.sh
+# chrony-configuration.sh
+
+# Available OS images documented in the project:
+# rocky9.5-x86_64-install-compute
+# rocky9.5-x86_64-install-service
+# rocky9.5-x86_64-netboot-compute
+# rocky9.5-x86_64-statelite-compute
+
+# Note:
+# This is a human-readable reference, not a directly executable xCAT
+# configuration file. Use xCAT commands and verify node attributes
+# before applying changes.
